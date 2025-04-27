@@ -130,20 +130,39 @@ def generate_mock_influence_data():
 async def send_messages(websocket):
     message_id = 1
     while True:
-        # Send a simple test message to verify websocket connection
+        # Select a random message template
+        message_template = random.choice(MESSAGE_TEMPLATES)
+        
+        # Load latest influence analysis data
+        influence_data = load_influence_data()
+        
+        # Create message with unique ID and additional data
         message = {
             "id": message_id,
-            "type": "test",
-            "content": "WebSocket connection test",
-            "timestamp": datetime.now().isoformat()
+            "action": message_template["action"],
+            "vehicle": message_template["vehicle"],
+            "callSign": message_template["callSign"],
+            "explanation": message_template["explanation"],
+            "category": message_template["category"],
+            "timestamp": datetime.now().isoformat(),
+            "influence_analysis": influence_data
         }
+        
+        # Add enemy field if present in template
+        if "enemy" in message_template:
+            message["enemy"] = message_template["enemy"]
         
         # Send the message
         await websocket.send(json.dumps(message))
-        print(f"Sent test message ID: {message_id}")
+        print(f"Sent message ID: {message_id}")
+        
+        # Save the message to a file with timestamp
+        filename = datetime.now().strftime("%d-%m-%Y %H-%M-%S.json")
+        with open(filename, 'w') as f:
+            json.dump(message, f, indent=2)
         
         message_id += 1
-        await asyncio.sleep(1)  # Send test message every second
+        await asyncio.sleep(3)  # Wait for 3 seconds
 
 async def main():
     async with websockets.serve(send_messages, "localhost", 8765):
