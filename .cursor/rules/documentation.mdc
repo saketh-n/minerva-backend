@@ -1,0 +1,280 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+## 📘 Overview
+
+**FlagFrenzyEnv** is a custom Gymnasium-compatible environment simulating a dynamic military scenario between two factions—**Legacy (Blue Team)** and **Dynasty (Red Team)**—in a large, continuous 2D battlefield (1,300,000 × 1,300,000 km). The agent assumes the role of the Blue Team and learns to command entities in real-time to achieve mission objectives through tactical movement, engagement, and retreat decisions.
+
+### Game Premise
+
+- **Team Blue (Legacy)**: Controlled by the agent.
+    - **Controllable packages**: `MADDOG`, `B1`
+    - **Uncontrollable package**: `AWACS`
+- **Team Red (Dynasty)**: Controlled by scripted logic.
+    - **6 controllable packages**
+    - **5 uncontrollable packages**
+
+Each package consists of **2–5 squadrons**, and each squadron consists of **1–4 units**. The game operates at the **squadron level**, and units are subject to domain-specific capabilities (e.g., air-to-ground strikes).
+
+## 🧠 Agent Objective
+
+The agent’s high-level goal is to:
+
+1. **Engage and destroy** Dynasty units effectively
+2. **Protect the B1** bomber package
+3. **Eliminate the Dynasty’s flagship (`Renhai`)** using B1
+4. **Return B1 to base** to secure victory
+
+Strategic decision-making, engagement, and proper timing of RTB are crucial for optimal performance.
+
+## 📦 Action Space
+
+The action space is a `spaces.Dict` with two keys:
+
+```python
+{
+    "action_type": spaces.Discrete(4),
+    "params": spaces.Box(low=-1.0, high=1.0, shape=(10,), dtype=np.float32)
+}
+```
+
+### Action Types:
+
+- `0`: **No-op**
+- `1`: **Move**
+    - `params[0]`: Normalized entity ID
+    - `params[1:7]`: Three spline control points (x, y) normalized to [-1, 1]
+- `2`: **Return to Base (RTB)**
+    - `params[0]`: Normalized entity ID
+- `3`: **Engage Target**
+    - `params[0]`: Source entity ID
+    - `params[1]`: Target entity ID
+    - `params[2]`: Engagement level ∈ {0, 1, 2, 3} (defensive → offensive)
+    - `params[3]`: Weapons usage ∈ {0, 1, 2} (tight → free fire)
+
+> ⚠️ All entity IDs are normalized floats between 0.0 and 1.0 and mapped to actual IDs internally.
+> 
+
+## 🔭 Observation Space
+
+The environment provides a fully observable state using a `spaces.Dict` with the following keys:
+
+```python
+{
+    "controllable_entities": spaces.MultiBinary(max_entities),
+    "entities": spaces.Box(shape=(max_entities, 26), dtype=np.float32),
+    "visibility": {
+        "legacy": spaces.MultiBinary(max_entities),
+        "dynasty": spaces.MultiBinary(max_entities)
+    },
+    "mission": spaces.Box(shape=(7,), dtype=np.float32),
+    "valid_engage_mask": spaces.Box(shape=(max_entities * max_entities,), dtype=np.float32),
+    "entity_id_list": spaces.Box(shape=(len(entity_id_list),), dtype=np.float32)
+}
+```
+
+### `entities` (Feature vector of length 26 per entity)
+
+1. Position: `x`, `y` (normalized)
+2. Velocity: `vx`, `vy` (normalized)
+3. Team one-hot: [1, 0] (Legacy) or [0, 1] (Dynasty)
+4. Entity index
+5. Mission priority (0/1)
+6. Domain one-hot: [land, air, sea]
+7. Target domain one-hot
+8. Ammo (normalized by max ammo)
+9. Is alive (0/1)
+10. Has returned to base (0/1)
+11. Is committing to combat (0/1)
+12. Engagement level one-hot (4)
+13. Weapons usage mode one-hot (3)
+14. Target index
+
+### `visibility`
+
+```python
+"visibility": {
+    "legacy": MultiBinary(max_entities),
+    "dynasty": MultiBinary(max_entities)
+}
+```
+
+- A binary vector where:
+    - `visibility["legacy"][i] == 1` means **entity i is visible to Legacy (Blue)**
+    - `visibility["dynasty"][i] == 1` means **entity i is visible to Dynasty (Red)**
+- Derived using `target_group.GetDetectedEntities()` from the simulation interface
+
+### `mission` status vector (length = 7)
+
+```python
+[flag_alive, b1_alive, awacs_alive, maddog_alive, b1_returned, maddog_returned, time_normalized]
+```
+
+| Index | Description | Type | Notes |
+| --- | --- | --- | --- |
+| 0 | Flagship alive | Binary | `1` if Renhai is alive |
+| 1 | B1 alive | Binary | `1` if B1 is alive |
+| 2 | AWACS alive | Binary | `1` if AWACS is alive |
+| 3 | MADDOG alive | Binary | `1` if MADDOG is alive |
+| 4 | B1 returned | Binary | `1` if B1 has returned to base |
+| 5 | MADDOG returned | Binary | `1` if MADDOG has returned to base |
+| 6 | Time elapsed | Normalized | `FrameIndex / (60 * max_game_time)`; in range [0, 1] |
+
+## 🏆 Reward Function
+
+The reward is composed of **dense stepwise components** and **terminal episode outcomes**:
+
+### Step-wise Rewards
+
+| Event | Value |
+| --- | --- |
+| Time penalty | `-0.0005` |
+| Idle step | `-0.005` |
+| Engage step | `+0.08` |
+| Flagship engaged | `+0.20` |
+| Enemy unit destroyed | `+0.10` |
+| Friendly unit destroyed | `-0.20` |
+| Flagship destroyed | `+0.50` |
+| B1 remains alive | `+0.001` |
+| B1 safe proximity | `+0.02` |
+| B1 danger proximity | `-0.01` |
+| B1 death (one-time) | `-0.50` |
+| Move out of bounds | `-0.02` |
+| RTB with too much ammo | `-0.05` |
+
+### Terminal Reward
+
+- **Blue Wins (`+1.0`)** if:
+    - Flagship (`Renhai`) is destroyed
+    - B1 is alive
+    - AWACS is alive
+    - B1 has returned to base
+- **Red Wins (`1.0`)** if:
+    - B1 is destroyed
+    - AWACS is destroyed
+
+Otherwise, no terminal reward.
+
+## 🤖 PPO Training Configuration
+
+This document outlines the training setup for the `FlagFrenzyEnv` custom environment using **RLlib's PPO (Proximal Policy Optimization)**. The agent learns to control Blue Team air units in a fully observable, hybrid-action space combat scenario. This is a basic example using Ray and RLlib 2.10.0 for training this environment. 
+
+---
+
+## Environment & Model Setup
+
+- **Environment**: Registered as `FlagFrenzyEnv-v0` via `env_creator`.
+- **Model**: Custom PyTorch model registered as `flag_frenzy_model`.
+- **Action Distribution**: Uses a hybrid discrete + continuous distribution (`hybrid_action_dist`) to support mixed actions (e.g., movement splines + action type).
+
+---
+
+### Core Training Parameters
+
+| Parameter | Value | Description |
+| --- | --- | --- |
+| **Algorithm** | PPO | Proximal Policy Optimization |
+| **Framework** | PyTorch | Backend for model training |
+| **Discount Factor** | 0.995 | Long-term reward prioritization |
+| **GAE Lambda** | 0.95 | Advantage estimation smoothing |
+| **Entropy Coeff.** | 0.01 → 0.003 | Encourages exploration early, decays over 200 iterations |
+| **Clip Param** | 0.2 | PPO clipping for policy stability |
+| **Value Clip** | 10.0 | Limits extreme value function updates |
+| **Gradient Clip** | 0.5 | Prevents exploding gradients |
+| **Learning Rate** | 3e-5 | Optimizer step size |
+
+---
+
+### Batch & Update Settings
+
+| Parameter | Value | Description |
+| --- | --- | --- |
+| **Rollout Length** | 900 | Matches episode horizon |
+| **Train Batch Size** | 43,200 | Full experience batch size |
+| **SGD Minibatch Size** | 2,048 | Size of each training batch |
+| **SGD Iterations** | 20 | Gradient passes per update |
+
+---
+
+### Rollout and Execution
+
+- **Workers**: 24 rollout workers for training (scalable to multiple workers)
+- **Horizon**: 900 steps per episode (sets max episode length)
+- **GPU**: None (uses CPU by default)
+
+---
+
+### Logging & Callbacks
+
+### Custom Callbacks
+
+- Adjusts entropy coefficient linearly from `0.01` to `0.003` over the first 200 iterations.
+
+---
+
+### Checkpointing
+
+| Parameter | Value |
+| --- | --- |
+| **Iterations** | 450 |
+| **Estimated Steps** | ~19M |
+| **Checkpoints** | Saved every iteration |
+| **Retention** | Last 5 checkpoints only |
+
+---
+
+## 🧩 Key Points for Development
+
+This section captures important architectural and behavioral details relevant for developers working on the environment or training stack.
+
+### Environment Initialization
+
+- `dynasty_engages=True` Can change this boolean to False to not have the Dynasty team engage in combat with the agent
+- `save_replay=False` Enable this boolean for saving replay JSON of simulation data when the game is running
+
+### Simulation Timing
+
+- **Frame Rate**: The environment steps the simulation forward by `600` simulation frames per RL step. This can be adjusted for varying levels of granularity.
+- **Game Time**: One game second = `60` simulation frames → 600 sim steps = **10 seconds** of game time.
+- **Max Episode Length**: 900 steps × 10 seconds = **15,000 seconds (4.2 hrs)** simulated per episode.
+
+### Entity ID ↔ Index Mapping
+
+- The environment maps **entity IDs** (simulation handles) to **indices** for consistent RL training inputs.
+- Mapping is stored in:
+    
+    ```python
+    self.id_to_index = {entity_id: index}
+    self.entity_id_list = [ordered list of entity_ids]
+    ```
+    
+- Used for:
+    - Indexing entity features in observations
+    - Valid action masks
+    - Target lookups during engagement
+
+### Visibility Logic
+
+- Visibility is computed **per faction** using `target_group.GetDetectedEntities()`.
+- `visibility["legacy"][i] = 1` means **entity i is visible to the Blue Team**.
+- Visibility gates which enemies can be engaged via `get_valid_engage_mask()`.
+
+### Action Validity
+
+- A binary **engage mask** defines legal engagements:
+    - Both entities must be alive
+    - Must be on opposing teams
+    - Target must be visible and have a valid target group
+- To engage in combat, all of the following must be true as well as the domain of the target must match the domain that the entity can engage with.
+- This mask is provided in observations as a flat array:
+    
+    `(source_entity_index * max_entities + target_index) → 1 if valid` 
+    
+
+### Replays
+
+- Replays are saved as JSON files if `save_replay=True`.
+- Stored in `./Replays` with timestamps for analysis and debugging.

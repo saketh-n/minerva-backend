@@ -1,0 +1,1 @@
+# Environment module package to avoid conflicts with Python standard library
