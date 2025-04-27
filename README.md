@@ -2,6 +2,8 @@
 
 A WebSocket server that simulates military-style message broadcasts. This server generates and sends random military-themed messages to connected clients at regular intervals.
 
+This is a test commit.
+
 ## Features
 
 - Real-time message broadcasting using WebSocket protocol
