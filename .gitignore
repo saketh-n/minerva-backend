@@ -19,12 +19,16 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Virtual Environment
 venv/
 env/
 ENV/
-.env
+.env.*
+*.local
 
 # IDE
 .idea/
@@ -35,6 +39,15 @@ ENV/
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+*.desktop
+.localized
 
 # Logs
-*.log 
+*.log
+
+# Temporary files
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints/ 
