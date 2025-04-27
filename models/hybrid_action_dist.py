@@ -7,14 +7,15 @@
 
 import torch
 import torch.nn.functional as F
+import logging
 
 from ray.rllib.models.torch.torch_action_dist import (
     TorchMultiActionDistribution,
     TorchCategorical,
     TorchDiagGaussian,
 )
-import logging
 
+from config.constants import ENV_CONFIG
 
 class HybridActionDistribution(TorchMultiActionDistribution):
     """Hybrid action distribution: Discrete (Categorical) + Continuous (Gaussian), with
@@ -41,7 +42,7 @@ class HybridActionDistribution(TorchMultiActionDistribution):
             self.logger.addHandler(handler)
         
         self.model = model
-        self.max_entities = 100 # TODO: Don't hardcode!
+        self.max_entities = ENV_CONFIG["max_entities"]
 
     @staticmethod
     def required_model_output_shape(action_space, model_config):
@@ -66,7 +67,6 @@ class HybridActionDistribution(TorchMultiActionDistribution):
 
             for i in range(batch_size):
                 if action_type[i].item() == 3:
-                    # print("Action 3 selected!")
                     # Decode source & target floats
                     src_float = torch.clamp(params_sampled[i, 0], 0.0, 1.0).item()
                     tgt_float = torch.clamp(params_sampled[i, 1], 0.0, 1.0).item()

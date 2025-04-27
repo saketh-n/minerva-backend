@@ -4,17 +4,21 @@
 # Author : Sanjna Ravichandar
 # Created: April 2025
 # -----------------------------------------------------------
+import os
+import sys
 import ray
 from ray import air, tune
+
+# Add the project root to the Python path
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.models import ModelCatalog
 from ray.tune.registry import register_env
+
 from register_env import env_creator
 from models.model import FlagFrenzyModel
 from models.hybrid_action_dist import HybridActionDistribution
-
-import os
-import json
+from config.constants import TRAINING_CONFIG, ENV_CONFIG
 
 # Register model
 ModelCatalog.register_custom_model("flag_frenzy_model", FlagFrenzyModel)
@@ -40,31 +44,32 @@ config = (
     .environment(env="FlagFrenzyEnv-v0", env_config={})
     .framework("torch")
     .rollouts(
-        num_rollout_workers=1,
-        rollout_fragment_length=900,
+        num_rollout_workers=TRAINING_CONFIG["num_rollout_workers"],
+        rollout_fragment_length=TRAINING_CONFIG["rollout_fragment_length"],
     )
     .training(
         model={
             "custom_model": "flag_frenzy_model",
             "custom_action_dist": "hybrid_action_dist",
         },
-        gamma=0.995,
-        lambda_=0.95,
-        clip_param=0.2,
-        entropy_coeff=0.01,
-        vf_clip_param=10.0,
-        grad_clip=0.5,
-        lr=3e-5,
-        train_batch_size=43200,
-        sgd_minibatch_size=2048,
-        num_sgd_iter=20,
+        gamma=TRAINING_CONFIG["gamma"],
+        lambda_=TRAINING_CONFIG["lambda_"],
+        clip_param=TRAINING_CONFIG["clip_param"],
+        entropy_coeff=TRAINING_CONFIG["entropy_coeff"],
+        vf_clip_param=TRAINING_CONFIG["vf_clip_param"],
+        grad_clip=TRAINING_CONFIG["grad_clip"],
+        lr=TRAINING_CONFIG["lr"],
+        train_batch_size=TRAINING_CONFIG["train_batch_size"],
+        sgd_minibatch_size=TRAINING_CONFIG["sgd_minibatch_size"],
+        num_sgd_iter=TRAINING_CONFIG["num_sgd_iter"],
     )
     .resources(num_gpus=0)
     .callbacks(FlagFrenzyCallbacks)
     .to_dict()
 )
 
-config["horizon"] = 900
+# Use horizon from the centralized config
+config["horizon"] = ENV_CONFIG["horizon"]
 
 results = tune.Tuner(
     "PPO",
@@ -76,6 +81,4 @@ results = tune.Tuner(
         name="flag_frenzy_ppo",
         log_to_file=True),
     param_space=config,
-
 ).fit()
-

@@ -15,6 +15,7 @@ from ray.rllib.models.modelv2 import ModelV2
 from ray.rllib.utils.annotations import override
 from ray.rllib.utils.framework import try_import_torch
 
+from config.constants import ENV_CONFIG
 
 torch, nn = try_import_torch()
 
@@ -33,12 +34,11 @@ class FlagFrenzyModel(TorchModelV2, nn.Module):
 
         self.last_obs = None
 
-        # TODO: Don't hardcode!
-        self.max_entities = 100
-        self.entity_feat_dim = 26
-        self.mission_dim = 7
-
-        self.action_dim_param = 10
+        # Use values from centralized config
+        self.max_entities = ENV_CONFIG["max_entities"]
+        self.entity_feat_dim = ENV_CONFIG["entity_feat_dim"]
+        self.mission_dim = ENV_CONFIG["mission_dim"]
+        self.action_dim_param = ENV_CONFIG["action_dim_param"]
 
         # Entity encoder
         self.entity_encoder = nn.Sequential(
@@ -436,14 +436,6 @@ class FlagFrenzyModel(TorchModelV2, nn.Module):
         self.attribution_results = attribution_scores
         
         print(f"Attribution processing complete. Found {len(attribution_scores)} components.")
-        # Debug print
-        # for k, v in self.attribution_results.items():
-        #     if isinstance(v, dict):
-        #         print(f"  {k}: { {kk: vv.shape if hasattr(vv, 'shape') else vv for kk, vv in v.items()} }")
-        #     elif hasattr(v, 'shape'):
-        #         print(f"  {k}: shape {v.shape}")
-        #     else:
-        #          print(f"  {k}: {v}")
 
 def compute_input_influence(model, observation, action_type_of_interest=None):
     """
@@ -515,9 +507,6 @@ def compute_input_influence(model, observation, action_type_of_interest=None):
                 # Get the processed attributions using the consolidated method
                 attributions = model.get_attributions() # Should return self.attribution_results
                                 
-                # Explicitly disable attribution after the pass if needed (keep_enabled=True keeps it on)
-                # model.disable_attribution_analysis() 
-
                 return attributions if attributions is not None else {}
                 
         except Exception as e:

@@ -1,6 +1,8 @@
 # Register custom env
+import os
+import sys
 from ray.tune.registry import register_env
-from env.flag_frenzy_env import FlagFrenzyEnv
+from env_module.flag_frenzy_env import FlagFrenzyEnv
 
 def env_creator(env_config):
     return FlagFrenzyEnv()
